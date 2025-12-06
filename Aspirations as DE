@@ -1,0 +1,18 @@
+Preferred Qualifications:
+1. AWS Certified Data Analytics - Specialty
+2. AWS Certified Solutions Architect - Associate or Professional
+3. Experience with real-time data processing using Kinesis or Kafka
+4. Knowledge of machine learning workflows on AWS (e.g., SageMaker)
+5. Familiarity with containerization technologies (Docker, Kubernetes)
+6. Experience with CI/CD pipelines and infrastructure-as-code (e.g., CloudFormation, Terraform)
+ 
+Technical Skills:
+- AWS Services: Glue, EMR, Lambda, Athena, Redshift, S3, Aurora, RDS, DynamoDB, Step Functions
+- Big Data: Hadoop, Spark, Delta Lake
+- Programming: Python, PySpark
+- Databases: SQL, PostgreSQL, NoSQL
+- Data Warehousing and Analytics
+- ETL/ELT processes
+- Data Lake architectures
+- Version control: Git
+- Agile methodologies

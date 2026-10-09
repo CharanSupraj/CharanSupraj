@@ -24,7 +24,7 @@ scd-0(fixed columns),I(only current),II(current & history),III(history in other 
 9 - Department wise highest salary
 10 - Difference between union and union all 
 11 - Difference between GROUP BY and ORDER BY
-12 -  Difference between Partition, clustering, bucketing approaches
+12 - Difference between Partition, clustering, bucketing approaches
 13 - What is an index and how does it improve performance
 14 - Performance optimization approaches in SQL
 15 - What is a subquery and how is it different from a join
@@ -34,6 +34,7 @@ scd-0(fixed columns),I(only current),II(current & history),III(history in other 
 19 - Difference between Trigger and Stored Procedure
 20 - Difference between a NULL value and a zero value in SQL
 21 - How to check the total count of the table without using ‘count’.
+22 - what are Window functions in SQL. Give 1 example for each.
 
 
 =>PySpark:

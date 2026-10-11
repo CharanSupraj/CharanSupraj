@@ -41,24 +41,20 @@ scd-0(fixed columns),I(only current),II(current & history),III(history in other 
 Schema enforcement
 RDD dataframe & DF..... schema is known means use DF.
 spark optimization:
-Partitioning
-Zodering: is like index in sql arrange files
-broadcastjoin
-short merge join
-persist and cache
+  Partitioning
+  Z-ordering
+  broadcast join
+  shuffle-hash join
+  sort-merge join
+  persist and cache
+  Adaptive Query Execution (AQE) and it's features
 broadcast variable
 pyspark read write
-Vaccume command
-ACID transactions on Spark:
 spark architecture
-Schema enforcement
-Upserts and deletes
-Diff between Rdd and DF
-get unique count of file while reading csv file in spark df
+get unique count while reading csv file in spark df
 sc.textFile("test.txt").map(lambda line: line.split(",")[:-1]).distinct().count()
 delete duplicates in spark
-syntax to read files in spark
-Word count script in PySpark
+Word count script in PySpark with RDD and DFs. And explain each keyword used.
 Transformations in spark... 2 types
 -> CGI Interview:
   Convert this
@@ -77,7 +73,13 @@ D,20051989,89879989,909
 D,20051989,89879989,909    
 D,20051989,89879989,909    
 T,,,,4
-The interviewer said there is a prebuilt function in Pyspark which can do that.
+The interviewer said there is a prebuilt function in Pyspark which can do that. 
+Using pandas.read_fwf for each H,D,T and then union them. Later convert to spark df.
+
+=> Delta tables of PySpark:
+Vacuum command
+ACID transactions on Spark
+Upserts and deletes
 
 
 

@@ -1,0 +1,126 @@
+Journey of DE over years:
+	DBs to Data warehouses: Single storage & compute to Cluster system with distributed storage and multiple workers.
+	Data Warehouses with PySpark & Data Lake: Now we can store all the data in raw format. We use Schema-on-Read
+	Data warehouses to Two-tier system: Clustered compute & Storage to Storage separated from Compute (serverless)
+	Delta tables: Open table format where metadata like zone maps or active data files is stored as a separate metadata file. Which also introduced to the concept of ELT.
+	Real-time data for GenAI: Instead of Batch, we are ingesting streaming/real-time data thru RAG pipelines and vector DBs directly for LLM models to fetch the data and answer instantly rather than building traditional dashboards. Also instead of having a central Data Engineering Team, we are treating the DE job as a micro service with Teams handling their own data products. This is called Data Mesh.
+
+Primary key or Surrogate key: is a system generated meaningless column to maintain the primary key logic in case the Business key logic changes in future. We use this key for joins. We use Hashing logic or UUIDs instead of auto-increment columns to beat the bottlenecks in distributed systems. In Customers table customer_id is a surrogate key as it is system generated. Not all primary keys are surrogate keys, we can have business keys also as primary key.
+
+Natural key or Business Key: is the actual primary key coming from the real world like employee name or email_id. We write the upsert logic using this key. This is called composite Business Key if more than 1 column is considered.
+
+Foreign Key: is used for Referral Integrity. In traditional DBs this key makes sure there are no Orphaned records. Like in a sales table if we insert a customer key that is not present in the customer table, this insert will be blocked. But, this blocking can't be implemented directly in BigData because the sales table has to check the customer table before inserting which is a bottleneck. So instead, we create Data quality rules to identify these orphaned records. And it brings us to the topic "RELY"
+
+RELY keyword: is used in Data Warehouses like Redshift to say that this foreign key will have no orphaned records. Since Redshift doesn't honor the Foreign key constraints but it's still important for internal query optimization, we used this Foreign Key along with "RELY". Now we as DEs have to make sure that the records are not Orphaned by implementing a Data Quality gate keeper and sending the orphaned records to Dead Letter Queue.
+
+Late arriving Dimensions: is when the record in the fact table arrives before the foreign key (Business key for Dim table) arrives in the Dimension table. Like the customer has immediately placed an order after creating the account. The sales data is captured regularly but the account creation data is captured once every night. So instead of marking this record into DLQ and miss reporting sales, we insert an "inferred Dimension" aka "Stub record" into Dim table, with a valid business key(customer name or email id) & surrogate key (customer id), and the rest of the columns as Unknown or -1. Later when the record/Dimension arrives we update the table using SCD I or II logic for Idempotent Merge.
+
+Late window or watermarking: is the period for which you go back in time to get the late arriving events. Like for example a person has clicked the BUY button at 12pm and internet connection is lost until 1pm. The record is going to come to the system 1hr late. So to track this record we have to design the late window to be 1.5hrs from now and later use upsert logic to maintain idempotency for the records that arrived on time. Here if the record is arrived after 2hrs, it is intentionally omitted by the system and hence we have to consider a proper window as going back in time like 5hrs can put the stress on the cluster and give us OOM error as it's built for streaming pipeline. How do I handle the omitted data is by creating a Reconciliation Pipeline which runs every night, takes data from the last 48hrs and accordingly corrects the "eventually consistent" data. Since the streaming data is only for speed, we have a bronze layer that is immutable append only layer, we pick all the late arriving events and perform an idempotent merge into the Gold layer which guarantees accuracy and consistency. This is called Lambda Architecture where we have real-time streaming aggregation and batch Reconciliation.... a Speed layer and a Batch layer. There is an upgrade to this architecture which is called Kappa Architecture where the same streaming job takes a bigger window of 48hrs at the end of the day and updates the data to be mathematically accurate.
+
+Stateless and Stateful processing: Stateless is like memoryless. It's a row level operation. It doesn't need other rows' context. Examples: masking PII, multiplying two columns of the same record, changing data type from timestamp to date. Stateful processing needs context from previous records like calculating the SUM of sales in the last 1hr or Max temperature for the device. Hence selecting the proper watermarks to manage the size of the State Store is really necessary to avoid OOM failures.
+
+"groupBy" & "Window Function" both use network Shuffle with Hash partitioning, but usually to get the output similar to window function, groupBy has to go with a self join which is another Shuffle that can be avoided in window functions.
+
+Hashing: is a way of producing a Pseudo-random number of any information. It's called Pseudo-random because it is reproducible, but the number looks random in nature. In Spark we use the Murmur3 algorithm. Hashing is usually used to determine the partition/worker node the record belongs to during a shuffle operation. Since the hashing returns number as output we can't eliminate hashing an integer datatype because if there is a structural pattern in the column, directly taking modulo of numbers like 200, 400, 600, will always return same value if we modulo by a number like 200(# of default partitions). And this will result in Skewness. But if we hash those numbers and then take modulo, we get different value, means different partition. While we can debate that this "collision" can happen for normal data also, where there are more records under ID=200 which is data similarity which can be fixed with salting only. Hashing on the other hand is trying to eliminate the structural skewness like 100, 200, 300..... by giving a different hash value and thus data falling under the different category/partition.
+
+IEEE 754 Floating point nightmare: occurs when a DoubleType is rounded to 2 decimal using F.round(col,2). Since under the hood, numbers are stored in binary, 10.05 can be stored as 10.0500000000001. When a billion of these are added, we'll be missing a couple hundred or thousand dollars in ledger. So to avoid it, always cast the column with DecimalType() unless you are rounding merely for comparison. And before casting we should use F.bround(col,2) to use Banker's rounding and then cast it. As simply casting will delete the accuracy of the data.
+
+groupBy+F.max(F.struct(x1,x2,x3).alias()) vs F.row_number(): the first is most efficient as it'll first calculate the local maxima and then pass that one record for further calculating the final maxima. But the second one will do a shuffle, then sort, then take max record. Both Shuffle and sorting are massive memory(RAM) & compute(CPU) operations respectively
+
+partitionBy vs bucketBy: Partition by is used for filtering by using a concept called Predicate Pushdown. We use this on low-cardinality columns. While bucket by is used on high-cardinality columns like customer_id and this keyword stores the metadata that the data is already Shuffle-hashed with customer_id column and the next time spark reads it, it skips the network shuffle using the meta data and executes joins directly. So one is used for pushdown predicates and the other is used for joins.
+
+repartition(200,"country"): will partition the data based on the country column and limit the max partitions to 200, means the country column has 120 countries, then we have atleast 80 partitions with no data and if there are 250 countries, the first 50 partitions can have 1 extra partition of data. On the other hand, hash of two countries with a modulo of 200 can fall under same partition there by increasing the skewness. But, if we give a repartition(200), it'll simply divide the data into 200 partitions.
+
+AQE: stands for Adaptive Query Execution started from Spark 3.0+. The Advantages are:
+	Dynamic Partition Coalescing: This combines tiny partitions after a shuffle to prevent small files problem.
+	Dynamic Join Downgrades: The default join algorithm is Sort-Merge join. But if one of the table is small enough to fit in a worker's RAM, AQE identifies it shifts the algorithm to Broadcast hash join or ShuffleHash join
+	Dynamic Skew Handling: During joins only, if a partition is skewed, AQE does the salting for us.
+The disadvantages are:
+	AQE is Triggered only at shuffle
+	It's hard to Debug as the initial DAG that triggered will be on-the-go updated by AQE
+	This will consume CPU cycles during the execution, which is a disadvantage for streaming pipelines. Hence it's often disabled for streaming data as this optimization is not needed for small amounts of data.
+
+Control on RAM & DISK: All are lazy transformations
+		cache(): persist(StorageLevel.MEMORY_AND_DISK)
+		persist(StorageLevel.xxx): below are the values that can replace xxx. The data will be stored as compressed, columnar binary formats.
+			MEMORY_ONLY: Stores on RAM. If the partitions can't fit, it'll be dropped and calculated when needed.
+			MEMORY_AND_DISK: Fills RAM first then spills to DISK
+			DISK_ONLY: Stores on Disk. Used to avoid ultra complex re-computation costs
+			MEMORY_ONLY_SER or MEMORY_AND_DISK_SER: serialized java byte arrays. Saves space but has compute costs for both serialization and deserialization. Since the data is also compressed, _SER is completely ignored. Unless we are using raw RDDs.
+			MEMORY_ONLY_2 or MEMORY_AND_DISK_2: creates a backup copy in another worker node in case of node failure.
+		unpersist(): deletes the persisted data from RAM or disk
+		spark.SparkContext.broadcast(variable): formula/definition of variable is stored in driver node and a copy of data is broadcasted to each worker node.
+		variable.destroy(): deletes the variable copy from driver and worker nodes while variable.unpersist() will delete the copy from worker nodes only.
+
+Dynamic Architecture vs Static data: Delta file format and bucketBy/sortBy can't be mixed together because Delta is an open-table format while bucketBy/sortBy is merely a static file format. So to get the advantages of bucketBy/sortBy which helps in join, we have ZORDER BY that will store the zone-maps of the files and makes the joins & filters faster by skipping the unwanted data. The concept of skipping the data is the same but the architecture is different. Now ZORDERing takes a lot of time and when a new column has to be indexed, it has to rebuild everything. To fix this problem we have Liquid Clustering.
+
+Delta table optimization Techniques:
+	Liquid Clustering: is a way of grouping the data on more than 1 column (upto 4) which makes it easy to define more than 1 index. It uses the Hilbert curve algorithm to arrange the data for read performance. We have to run spark.sql("OPTIMIZE my_table") so that the curve is updated with the recent data. This job can't be replaced with Deletion Vectors or Auto Compaction as they are trying to optimise the write performance & Storage layer respectively and not the read performance.
+	option("delta.enableDeletionVectors","true"): Updates only 1 record in a parquet file and creates a bitmap to log this update. Hence increasing the write performance massively. We can mention this while delta table creation or use an alter command to upgrade it in future. But if we use it the delta table version will be upgraded and could break the systems that are using lower versions of delta table
+	option("delta.autoOptimize.autoCompact","true"): has to be enabled on the delta table, which checks the files it just wrote. If they are small, this setting will combine them into 128MB files before executing the next steps. This will increase the execution time as it is doing the extra step of combining the files, but saves the storage.
+	spark.sql("OPTIMIZE delta. `location.parquet` ZORDER BY (user_id)"): Optimizes and orders the data on user_id column, stores this range in zone maps which helps in skipping data while read operation.
+	spark.sql("OPTIMIZE my_table"): is a manual Optimization command that triggers File-Sizing(auto compaction) & data Sorting(Liquid cluster or Zorder) related  optimizations defined on delta table "my_table".
+	spark.sql("REORG TABLE my_table APPLY (PURGE)"): command actually opens all the affected files (due to record delete or column drop), creates a fresh copy and updates the _delta_log file.
+	spark.sql("VACUUM my_table RETAIN 168 HOURS"): This step will physically delete files that are not referenced in _delta_log and are created more than 168 hours ago. 168 hours = 7 days is default. This will prevent future time travelling as the lower versions are deleted.
+spark.sql("ALTER TABLE my_table CLUSTER BY (stored_id, date)"): is a command that gives the meaning to the word "liquid" in liquid clustering. This command runs in milliseconds as it just updates the meta data and any future data coming will follow the current clustering method. Now coming to the data that is already in S3! This has to be optimized. Instead of all the historical data being optimized in single sitting like ZORDER, Liquid clustering does this intentionally in chunks per command. For example, if we run Optimize, out of 10TB data, only 500GB data is optimised and the job shuts down. This behaviour is called Bounded Execution which was intentionally hardcoded by Delta developers because of the predictable Maintenance window. So this 10TB data take about 20 commands to completely optimize the delta table with the latest clustered columns with predictable runtime and not affecting the current Business analysis while taking care of in-flight cluster failures. All of this with one single command and no need of technical expertise at the same cost of doing it manually. This could actually take less cost because during in-flight failures the current progress is lost which is eliminated here because this deals with one chunk at a time and saves the progress.
+
+PII Data Masking: is a way of hiding sensitive data. Two ways to do it:
+	Static masking: is masking the data when the data moves from silver to gold layer. Data is permanently lost
+	Dynamic masking: is creating another view on top of sensitive data and based on user access, we mask or pass the data
+We have 3 main types of masking:
+	Nullifying: is the process of replacing the data with xxx-xxx-xxx
+	Hashing: is the process of using SHA-256 to mask. Helpful for joins and is irreversible but with brute force the actual value can be extracted. The counter for this brute force attack is using salt or pepper key to actual data and then hashing it.
+	Tokenization: is one of the ways Amazon Macie uses. It stores the mapping which can be accessed via secure key.
+
+ACID:
+	A: Atomicity - Either write everything or write nothing
+	C: Consistency - Schema is consistent
+	I: Isolation - Prevents Dirty reads which is reading data between an update. Essentially isolating the read & write. Always refer to the delta logs at a given point in time.
+	D: Durability - Storage is durable
+
+Auditing & Compliance Framework:
+	1. Audit: delta logs records write audits, AWS cloud trail records read audits
+	2. Lineage: AWS DataZone to track the lineage and transformation in a Graphical view. But this data comes from Spark Catalyst optimizer, so we should not use external APIs and Pandas UDFs as the optimizer treats them as a black box. To get the lineage as a table, we have to configure Glue's Spark listener to write the column level source to target mapping into S3 as JSON. We have to write a seperate script to parse this data or use Crawlers to query the lineage in Athena. But when it comes to Databricks Unity Catalog, all of this comes built in.
+	3. Privacy: Tagging the PII data using AWS Macie. It'll generate a "Findings" file which will reach lambda via Event bridge. Then Lambda will tag all the files in the Bronze layer. The tags will be propagated to Silver and Gold layers.
+	4. Bitemporal isolation: To have two columns. one for when the transaction occurred and another for when the transaction came to the pipeline
+
+Reduction in speed of a PySpark Job: can be due to 6 main reasons:
+	1. Data Skewness
+	2. Small files
+	3. Duplicates in data causing join explosion
+	4. Data spilling to Disk as RAM is not enough
+	5. Garbage collection is paused due to broadcast or collect()
+	6. External API call
+
+ETL vs ELT:
+	ELT: The confusing part is extract. We usually "EXTRACT" the data using API calls which are done by a small compute. Then we directly write to S3 which is "LOAD". This is a bronze layer and the data is in its absolute Raw form. Then we run "TRANSFORMATIONS" like cleaning, deduplicating without affecting the granularity of data we form Silver layer. This layer can be used for Machine learning or act as source of Truth. These data/tables are further transformed/aggregated/grouped into a Star Schema which we call the Gold layer. This layer gives out data for Analysts or Dashboards which is a Business presentation layer.
+	ETL: is if we directly TRANSFORM the data after EXTRACTing and LOAD the data into S3 or redshift. Then we call it as ETL where we lose the source of truth and power to audit or reprocess the batch.
+	Medallion Architecture: is strictly coupled with E-L-T as the bronze layer holds the raw data and thereby completing the EXTRACT-LOAD step. Then Silver and golder layers are the TRANSFORMATION steps to enrich the data and simplify the analysis respectively.
+	Summary of difference:
+		Rigid schema or Schema on write is ETL
+		Heavy compute is a built-in thing in ETL
+		Auditability is lost in ETL
+
+Types of Optimizations:
+	Query Level:
+		Don't use select *
+		Prefer WHERE vs HAVING
+		Use Join vs subqueries
+		PREFER EXISTS vs IN
+		Avoid functions on Indexed columns
+	Database & Schema Level:
+		Indexing
+		Partitioning
+		Use smallest data types
+		Use Denormalized data to reduce joins
+
+DecimalType(38,10) vs DoubleType(): Double can store massive & minute numbers in scientific notation like 1.038 * 10^-208, but it can introduce precision accuracy problems which will vary based on underlying hardware. And also double is computationally fast. While decimal maintains accuracy hence used in finance related columns but takes extra compute to process. So it's speed vs accuracy.
+
+DB vs DW: 
+	Database: is a row based storage system, mostly used for write. Means, data is Normalised and we have a single place to update. These are optimised for high-volume single-record writes. OLTP - Online Transaction Processing
+	Data Warehouse: is a columnar based storage system, mostly used for read. Means, data is Denormalised to make reads faster as we don't have to join multiple tables. These are optimised for massive multi-record reads. OLAP - Online Analytical Processing.
+
+CTE vs View vs TEMP Table:
+	CTE is more like a text replacer in a query. If the CTE table is called 3 times. The CTe executes 3 times.
+	View is SQL definition stored in the Data Warehouse. It never executes until we call a select on it
+	Temp table will execute and cache the table immediately which will be lost once the DB connection closes.
